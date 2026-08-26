@@ -47,9 +47,25 @@ const $=s=>document.querySelector(s);
 const HAND=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
 const TIPS=new Set([4,8,12,16,20]);
 let ws,retry,token='',recent=[],marks=null,lastSaved='';
+// Source frames reach the monitor straight from A, while their landmarks come
+// the long way round through C and the canvas. Holding a few frames lets the
+// skeleton be drawn on the frame it was actually measured from, instead of
+// floating over a newer one.
+const PENDING_LIMIT=20,LIVE_FALLBACK_MS=1200;let pending=[],lastPaired=0;
 const octx=$('#overlay').getContext('2d');
 function unpack(buf){const n=new DataView(buf).getUint32(0,false),meta=JSON.parse(new TextDecoder().decode(new Uint8Array(buf,4,n)));return{meta,image:new Uint8Array(buf,4+n)}}
 function showImage(img,bytes){const url=URL.createObjectURL(new Blob([bytes],{type:'image/jpeg'})),old=img.src;img.onload=()=>old&&URL.revokeObjectURL(old);img.src=url}
+function showSource(bytes){showImage($('#source'),bytes);$('#sourceFrame').hidden=false;$('#sourceEmpty').hidden=true}
+function pairSource(seq){
+  // Pair on seq, not frame_id: B's ingest header does not carry frame_id, so it
+  // arrives back here as null. seq survives the whole phone -> A -> B -> C ->
+  // canvas path. Falling back to the newest frame keeps the video alive when
+  // the seq is unknown or has already aged out.
+  const at=(seq==null)?-1:pending.findIndex(f=>f.id===seq);
+  const frame=at>=0?pending[at]:pending[pending.length-1];
+  if(at>=0)pending=pending.slice(at+1);
+  if(frame)showSource(frame.bytes);
+  lastPaired=performance.now()}
 function drawOverlay(){const c=$('#overlay'),w=c.width,h=c.height;octx.clearRect(0,0,w,h);
   if(!marks||marks.length!==21)return;
   const p=marks.map(m=>[m.x*w,m.y*h]);
@@ -67,13 +83,17 @@ function connect(){clearTimeout(retry);ws=new WebSocket((location.protocol==='ht
       if(f.meta.name===lastSaved)return;lastSaved=f.meta.name;addShot(f.meta,true);
       const a=document.createElement('a');a.href=f.meta.url;a.download=f.meta.name;document.body.appendChild(a);a.click();a.remove();
       $('#status').textContent='저장됨: '+f.meta.name;return}
-    if(f.meta.kind==='source'){showImage($('#source'),f.image);$('#sourceFrame').hidden=false;$('#sourceEmpty').hidden=true;
+    if(f.meta.kind==='source'){
+      pending.push({id:f.meta.seq,bytes:f.image});
+      while(pending.length>PENDING_LIMIT)pending.shift();
+      // If the landmark path stalls, stop waiting and show the live frame.
+      if(performance.now()-lastPaired>LIVE_FALLBACK_MS)showSource(f.image);
       const now=performance.now();recent.push(now);if(recent.length>30)recent.shift();
       $('#fps').textContent=(recent.length>2?(recent.length-1)/((recent.at(-1)-recent[0])/1000):0).toFixed(1);return}
     // Canvas frames are the only ones carrying command state; source frames
     // must never overwrite it with undefined.
     showImage($('#canvas'),f.image);$('#canvas').hidden=false;$('#canvasEmpty').hidden=true;
-    marks=f.meta.landmarks||null;drawOverlay();
+    marks=f.meta.landmarks||null;pairSource(f.meta.seq);drawOverlay();
     $('#command').textContent=f.meta.command??'IDLE';$('#mode').textContent=f.meta.mode??'IDLE';
     $('#fingers').textContent=f.meta.finger_count??'–';
     $('#zoom').textContent=Number(f.meta.zoom||1).toFixed(2)+'×';
