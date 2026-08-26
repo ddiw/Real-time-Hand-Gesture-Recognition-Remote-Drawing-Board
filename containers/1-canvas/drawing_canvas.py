@@ -97,6 +97,7 @@ class DrawingCanvas:
         pen_thickness: int = 4,
         eraser_radius: int = 24,
         min_draw_distance: float = 2.0,
+        max_draw_distance: float = 120.0,
     ) -> None:
         self.width = width
         self.height = height
@@ -108,6 +109,7 @@ class DrawingCanvas:
         self.pen_thickness = pen_thickness
         self.eraser_radius = eraser_radius
         self.min_draw_distance = min_draw_distance
+        self.max_draw_distance = max_draw_distance
         self._previous_draw_point: tuple[int, int] | None = None
         self._cursor_command = "IDLE"
         self._cursor_point: tuple[int, int] | None = None
@@ -164,7 +166,13 @@ class DrawingCanvas:
         else:
             dx = point[0] - self._previous_draw_point[0]
             dy = point[1] - self._previous_draw_point[1]
-            if dx * dx + dy * dy >= (self.min_draw_distance / self.zoom) ** 2:
+            squared = dx * dx + dy * dy
+            if squared > (self.max_draw_distance / self.zoom) ** 2:
+                # A tracking glitch can move the index tip across the canvas in
+                # one frame. Start a new stroke rather than joining the two
+                # positions with a line that was never drawn.
+                cv2.circle(self.image, point, max(1, thickness // 2), (20, 20, 20), -1, cv2.LINE_AA)
+            elif squared >= (self.min_draw_distance / self.zoom) ** 2:
                 cv2.line(self.image, self._previous_draw_point, point, (20, 20, 20), thickness, cv2.LINE_AA)
         self._previous_draw_point = point
 

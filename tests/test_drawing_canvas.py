@@ -46,6 +46,13 @@ class DrawingCanvasTests(unittest.TestCase):
         self.assertEqual(canvas.screen_to_canvas((50, 50)), (50, 50))
         self.assertEqual(canvas.screen_to_canvas((70, 50)), (60, 50))
 
+    def test_a_tracking_jump_does_not_streak_across_the_canvas(self):
+        canvas = DrawingCanvas(200, 200, min_draw_distance=0, max_draw_distance=50)
+        canvas.apply("DRAW", (10, 10))
+        canvas.apply("DRAW", (190, 190))
+        self.assertTrue(np.all(canvas.image[100, 100] == 255))
+        self.assertTrue(np.any(canvas.image[186:195, 186:195] < 255))
+
     def test_clear_resets_the_drawing_and_the_zoom(self):
         canvas = DrawingCanvas(100, 100, min_draw_distance=0)
         canvas.apply("DRAW", (20, 20))
