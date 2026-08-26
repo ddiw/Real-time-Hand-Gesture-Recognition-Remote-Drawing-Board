@@ -1,6 +1,12 @@
 .git
 .venv
-__pycache__
-*.py[cod]
+**/__pycache__
+**/*.py[cod]
+captures
+tmp
+tests
+*.pdf
+*.md
+*.ps1
 data/drawings/*
 !data/drawings/.gitkeep

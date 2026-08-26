@@ -1,0 +1,6 @@
+fastapi>=0.115,<1
+numpy>=1.26,<3
+opencv-python-headless>=4.10,<5
+qrcode[pil]>=8,<9
+uvicorn[standard]>=0.34,<1
+websockets>=15,<16

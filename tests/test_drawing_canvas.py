@@ -46,6 +46,21 @@ class DrawingCanvasTests(unittest.TestCase):
         self.assertEqual(canvas.screen_to_canvas((50, 50)), (50, 50))
         self.assertEqual(canvas.screen_to_canvas((70, 50)), (60, 50))
 
+    def test_clear_resets_the_drawing_and_the_zoom(self):
+        canvas = DrawingCanvas(100, 100, min_draw_distance=0)
+        canvas.apply("DRAW", (20, 20))
+        canvas.apply("DRAW", (80, 80))
+        canvas.apply("ZOOM_IN", (50, 50))
+        canvas.apply("CLEAR", None)
+        self.assertTrue(np.all(canvas.image == 255))
+        self.assertEqual(canvas.zoom, 1.0)
+
+    def test_export_omits_the_zoom_label_and_the_cursor(self):
+        canvas = DrawingCanvas(100, 100)
+        canvas.apply("ERASE", (50, 50))
+        self.assertTrue(np.array_equal(canvas.export(), canvas.image))
+        self.assertFalse(np.array_equal(canvas.export(), canvas.render()))
+
     def test_eraser_cursor_is_visible_but_not_saved_to_canvas(self):
         canvas = DrawingCanvas(100, 100)
         canvas.apply("ERASE", (50, 50))

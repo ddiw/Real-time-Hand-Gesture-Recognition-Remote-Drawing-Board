@@ -1,10 +1,10 @@
-"""Canvas service on 8762. Consumes C command JSON without changing gesture rules."""
+"""Canvas service on 8770. Consumes C command JSON without changing gesture rules."""
 from __future__ import annotations
 import json,os,struct
 import cv2,websockets
 from fastapi import FastAPI,WebSocket,WebSocketDisconnect
 from drawing_canvas import DrawingCanvas
-OUTPUT=os.getenv("WEB_CANVAS_OUTPUT_URL","ws://web:8000/ws/canvas-output/{session_id}")
+OUTPUT=os.getenv("WEB_CANVAS_OUTPUT_URL","ws://127.0.0.1:8000/ws/canvas-output/{session_id}")
 app=FastAPI(title="Drawing Canvas"); canvases={}
 def pack(meta,data):
     raw=json.dumps(meta,separators=(",",":")).encode(); return struct.pack(">I",len(raw))+raw+data
@@ -20,8 +20,15 @@ async def commands(ws:WebSocket,session_id:str):
     try:
         async with websockets.connect(OUTPUT.format(session_id=session_id),max_size=None) as output:
             while True:
-                packet=json.loads(await ws.receive_text()); command=str(packet.get("command","IDLE")); p=point(packet)
+                packet=json.loads(await ws.receive_text()); command=str(packet.get("command","IDLE"))
+                # EXPORT is a monitor request, not a gesture. It returns the stored
+                # drawing at full quality, without the zoom label or the cursor.
+                if command=="EXPORT":
+                    ok,png=cv2.imencode(".png",canvas.export())
+                    if ok: await output.send(pack({"kind":"export","session_id":session_id,"zoom":round(canvas.zoom,3)},png.tobytes()))
+                    continue
+                p=point(packet)
                 d=packet.get("index_direction") or {}; direction=(float(d["x"]),float(d["y"])) if "x" in d and "y" in d else None
                 canvas.apply(command,p,direction); ok,jpeg=cv2.imencode(".jpg",canvas.render(),[cv2.IMWRITE_JPEG_QUALITY,88])
-                if ok: await output.send(pack({"kind":"canvas","session_id":session_id,"frame_id":packet.get("frame_id"),"seq":packet.get("seq"),"command":command,"mode":packet.get("mode","IDLE"),"zoom":round(canvas.zoom,3),"inference_ms":packet.get("inference_ms")},jpeg.tobytes()))
+                if ok: await output.send(pack({"kind":"canvas","session_id":session_id,"frame_id":packet.get("frame_id"),"seq":packet.get("seq"),"command":command,"mode":packet.get("mode","IDLE"),"zoom":round(canvas.zoom,3),"inference_ms":packet.get("inference_ms"),"finger_count":packet.get("finger_count"),"landmarks":packet.get("landmarks")},jpeg.tobytes()))
     except WebSocketDisconnect: canvas.hide_cursor()

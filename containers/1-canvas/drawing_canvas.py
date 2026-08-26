@@ -11,7 +11,6 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
-import mediapipe as mp
 import numpy as np
 
 _HERE = Path(__file__).resolve().parent
@@ -133,6 +132,9 @@ class DrawingCanvas:
         if direction is not None and math.hypot(*direction) > 0.0:
             length = math.hypot(*direction)
             self._cursor_direction = (direction[0] / length, direction[1] / length)
+        if command == "CLEAR":
+            self.clear()
+            return
         if command == "ZOOM_IN":
             self.zoom = min(self.max_zoom, self.zoom * self.zoom_step)
             self.end_stroke()
@@ -165,6 +167,16 @@ class DrawingCanvas:
             if dx * dx + dy * dy >= (self.min_draw_distance / self.zoom) ** 2:
                 cv2.line(self.image, self._previous_draw_point, point, (20, 20, 20), thickness, cv2.LINE_AA)
         self._previous_draw_point = point
+
+    def clear(self) -> None:
+        """Reset the drawing surface and the zoom level to their initial state."""
+        self.image[:] = 255
+        self.zoom = 1.0
+        self.end_stroke()
+
+    def export(self):
+        """Return the stored drawing without the zoom label or the cursor."""
+        return self.image.copy()
 
     def end_stroke(self) -> None:
         self._previous_draw_point = None
@@ -297,16 +309,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--pip-angle-open", type=float, default=120.0)
     parser.add_argument(
-        "--release-pip-angle", type=float, default=145.0,
-        help="PIP angle below this value counts toward the 3-frame mode release",
+        "--zoom-deadzone", type=float, default=0.15,
+        help="Distance from neutral, in palm widths, before three fingers zoom",
     )
     parser.add_argument(
-        "--zoom-motion", type=float, default=0.05,
-        help="Normalized spacing movement required for one zoom event",
-    )
-    parser.add_argument(
-        "--zoom-filter-alpha", type=float, default=0.75,
-        help="Zoom spacing smoothing; lower is steadier, higher is more responsive",
+        "--zoom-filter-alpha", type=float, default=0.6,
+        help="Zoom travel smoothing; lower is steadier, higher is more responsive",
     )
     parser.add_argument("--output", type=Path, default=Path("captures"))
     parser.add_argument("--canvas-width", type=int, default=360)
@@ -359,6 +367,8 @@ def save_capture(output_dir: Path, frame, landmarks, world_landmarks, state) -> 
 
 
 def main() -> None:
+    import mediapipe as mp
+
     args = parse_args()
     if args.canvas_width <= 0 or args.canvas_height <= 0:
         raise ValueError("Canvas width and height must be positive")
@@ -370,8 +380,7 @@ def main() -> None:
 
     classifier = GestureClassifier(
         open_pip_angle_deg=args.pip_angle_open,
-        release_pip_angle_deg=args.release_pip_angle,
-        zoom_motion_ratio=args.zoom_motion,
+        zoom_deadzone_ratio=args.zoom_deadzone,
         zoom_filter_alpha=args.zoom_filter_alpha,
     )
     options = mp.tasks.vision.HandLandmarkerOptions(
@@ -432,7 +441,7 @@ def main() -> None:
                 if result.hand_landmarks:
                     landmarks = result.hand_landmarks[0]
                     world_landmarks = result.hand_world_landmarks[0]
-                    state = classifier.update(world_landmarks)
+                    state = classifier.update(world_landmarks, landmarks)
                     current_landmarks = landmarks
                     current_world_landmarks = world_landmarks
                     current_state = state
@@ -469,12 +478,12 @@ def main() -> None:
                     )
                     lines = (
                         f"Command: {state.command}",
-                        f"Locked mode: {state.mode} (release {state.release_frames}/3)",
+                        f"Mode: {state.mode} (fingers {state.finger_count})",
                         f"Index / middle / ring / pinky: {state.index.stable_label} / {state.middle.stable_label} / {state.ring.stable_label} / {state.pinky.stable_label}",
                         f"PIP angle (index / middle): {state.index.pip_angle_deg:.1f} / {state.middle.pip_angle_deg:.1f} deg",
-                        f"thumb active / zoom mode: {state.thumb_active} / {state.zoom_mode_active}",
-                        f"thumb-index spacing / delta: {state.thumb_index_spacing_ratio or 0.0:.2f} / {state.zoom_delta or 0.0:+.2f}",
-                        f"zoom session direction: {state.zoom_session_direction or '-'}",
+                        f"thumb active / zoom posture: {state.thumb_active} / {state.zoom_active}",
+                        f"hand x / offset: {state.horizontal_ratio or 0.0:.2f} / {state.horizontal_delta or 0.0:+.2f} palm widths",
+                        f"zoom direction: {state.zoom_direction or '-'}",
                     )
                     color = (40, 220, 40) if state.command != "IDLE" else (40, 80, 255)
                 else:

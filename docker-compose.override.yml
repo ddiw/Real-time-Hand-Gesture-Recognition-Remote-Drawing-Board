@@ -1,0 +1,61 @@
+# Development overrides: mount sources and restart each service on save so an
+# edit does not need an image rebuild. Compose loads this file automatically;
+# use `docker compose -f docker-compose.yml up` to run without it.
+services:
+  web:
+    volumes:
+      - ./containers/0-web:/app:ro
+      - ./data/drawings:/app/data/drawings
+    command:
+      - uvicorn
+      - app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app
+
+  canvas:
+    volumes:
+      - ./containers/1-canvas:/app:ro
+      - ./containers/3-pattern-command:/app/3-pattern-command:ro
+    command:
+      - uvicorn
+      - app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8770"
+      - --reload
+      - --reload-dir
+      - /app
+
+  vision-analysis:
+    volumes:
+      - ./containers/2-vision-analysis/app:/app/app:ro
+    command:
+      - python
+      - -m
+      - watchfiles
+      - --target-type
+      - command
+      - --filter
+      - python
+      - python -m app.main
+      - /app/app
+
+  pattern-command:
+    volumes:
+      - ./containers/3-pattern-command:/app:ro
+    command:
+      - python
+      - -m
+      - watchfiles
+      - --target-type
+      - command
+      - --filter
+      - python
+      - python app.py
+      - /app

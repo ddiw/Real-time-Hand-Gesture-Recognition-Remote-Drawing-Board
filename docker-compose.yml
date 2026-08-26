@@ -7,17 +7,22 @@ services:
       - "8000:8000"
     environment:
       VISION_ANALYSIS_WS_URL: ws://vision-analysis:8760/ingest/{session_id}
+      CANVAS_COMMAND_WS_URL: ws://canvas:8770/commands/{session_id}
+      DRAWINGS_DIR: /app/data/drawings
       SESSION_TOKEN: ${SESSION_TOKEN:-hand-board}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+    volumes:
+      - ./data/drawings:/app/data/drawings
     depends_on:
       - vision-analysis
+      - canvas
 
   canvas:
     build:
       context: .
       dockerfile: containers/1-canvas/Dockerfile
     ports:
-      - "8762:8762"
+      - "8770:8770"
     environment:
       WEB_CANVAS_OUTPUT_URL: ws://web:8000/ws/canvas-output/{session_id}
 
@@ -26,7 +31,8 @@ services:
       context: .
       dockerfile: containers/2-vision-analysis/Dockerfile
     ports:
-      - "8760:8760"
+      - "8760:8760" # ingest: Container A -> B (ws://vision-analysis:8760/ingest/{session_id})
+      - "8762:8762" # /health, /metrics
     environment:
       PATTERN_COMMAND_WS_URL: ws://pattern-command:8761/landmarks
     depends_on:
@@ -37,4 +43,5 @@ services:
       context: .
       dockerfile: containers/3-pattern-command/Dockerfile
     environment:
-      CANVAS_WS_URL: ws://canvas:8762/commands/{session_id}
+      CANVAS_WS_URL: ws://canvas:8770/commands/{session_id}
+      ZOOM_DEADZONE_RATIO: ${ZOOM_DEADZONE_RATIO:-0.15}
