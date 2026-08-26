@@ -1,6 +1,7 @@
 param(
     [string]$SessionToken = "hand-board",
     [switch]$Ngrok,
+    [switch]$Reload,
     [string]$NgrokPath = $env:NGROK_PATH
 )
 
@@ -29,6 +30,8 @@ $env:SESSION_TOKEN = $SessionToken
 $env:VISION_ANALYSIS_WS_URL = "ws://127.0.0.1:8760/ingest/{session_id}"
 $env:WEB_CANVAS_OUTPUT_URL = "ws://127.0.0.1:8000/ws/canvas-output/{session_id}"
 $env:CANVAS_WS_URL = "ws://127.0.0.1:8770/commands/{session_id}"
+$env:CANVAS_COMMAND_WS_URL = "ws://127.0.0.1:8770/commands/{session_id}"
+$env:DRAWINGS_DIR = Join-Path $projectRoot "data\drawings"
 $env:PATTERN_COMMAND_WS_URL = "ws://127.0.0.1:8761/landmarks"
 $env:HAND_LANDMARKER_MODEL_PATH = Join-Path $projectRoot "containers\2-vision-analysis\models\hand_landmarker.task"
 
@@ -61,16 +64,32 @@ try {
         $env:PUBLIC_BASE_URL = ""
     }
 
-    Start-LocalService "web" @("-m", "uvicorn", "app:app", "--app-dir", "containers/0-web", "--host", "127.0.0.1", "--port", "8000")
-    Start-LocalService "canvas" @("-m", "uvicorn", "app:app", "--app-dir", "containers/1-canvas", "--host", "127.0.0.1", "--port", "8770")
-    Start-LocalService "pattern-command" @("containers/3-pattern-command/app.py")
-    Start-LocalService "vision-analysis" @("-m", "containers.2-vision-analysis.app.main")
+    # -Reload restarts each service on save. uvicorn watches the two FastAPI
+    # apps; the other two are plain scripts, so watchfiles (already installed
+    # with uvicorn[standard]) reruns them instead.
+    if ($Reload) {
+        Start-LocalService "web" @("-m", "uvicorn", "app:app", "--app-dir", "containers/0-web", "--host", "127.0.0.1", "--port", "8000",
+            "--reload", "--reload-dir", "containers/0-web")
+        Start-LocalService "canvas" @("-m", "uvicorn", "app:app", "--app-dir", "containers/1-canvas", "--host", "127.0.0.1", "--port", "8770",
+            "--reload", "--reload-dir", "containers/1-canvas", "--reload-dir", "containers/3-pattern-command")
+        Start-LocalService "pattern-command" @("-m", "watchfiles", "--target-type", "command", "--filter", "python",
+            ".venv\Scripts\python.exe containers/3-pattern-command/app.py", "containers/3-pattern-command")
+        Start-LocalService "vision-analysis" @("-m", "watchfiles", "--target-type", "command", "--filter", "python",
+            ".venv\Scripts\python.exe -m containers.2-vision-analysis.app.main", "containers/2-vision-analysis/app")
+    } else {
+        Start-LocalService "web" @("-m", "uvicorn", "app:app", "--app-dir", "containers/0-web", "--host", "127.0.0.1", "--port", "8000")
+        Start-LocalService "canvas" @("-m", "uvicorn", "app:app", "--app-dir", "containers/1-canvas", "--host", "127.0.0.1", "--port", "8770")
+        Start-LocalService "pattern-command" @("containers/3-pattern-command/app.py")
+        Start-LocalService "vision-analysis" @("-m", "containers.2-vision-analysis.app.main")
+    }
 
     Start-Sleep -Seconds 3
-    Write-Host "Monitor: http://127.0.0.1:8000/?t=$SessionToken"
     if ($publicUrl) {
+        Write-Host "Monitor: $publicUrl/?t=$SessionToken"
         Write-Host "Phone:   $publicUrl/capture.html?t=$SessionToken"
+        Write-Host "Local:   http://127.0.0.1:8000/?t=$SessionToken"
     } else {
+        Write-Host "Monitor: http://127.0.0.1:8000/?t=$SessionToken"
         Write-Host "Phone:   로컬 확인만 가능 (휴대폰 연결은 -Ngrok 옵션 사용)"
     }
     Write-Host "Health:  http://127.0.0.1:8762/health"
@@ -81,4 +100,10 @@ try {
     foreach ($process in $processes) {
         if (-not $process.HasExited) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue }
     }
+    # uvicorn --reload and watchfiles run the server in a child process, so
+    # stopping the launcher leaves the port held. Clear the ports too.
+    Start-Sleep -Milliseconds 500
+    Get-NetTCPConnection -LocalPort 8000, 8760, 8761, 8762, 8770 -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -Unique |
+        ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
 }

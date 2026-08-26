@@ -2,3 +2,4 @@ mediapipe==1.0.1
 numpy==2.5.2
 opencv-python-headless==5.0.0.93
 websockets==17.0.1
+watchfiles==1.1.0  # docker-compose.override.yml reload only
