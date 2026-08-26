@@ -17,6 +17,10 @@ from gesture_classifier import GestureClassifier
 HOST = os.getenv("PATTERN_COMMAND_HOST", "0.0.0.0")
 PORT = int(os.getenv("PATTERN_COMMAND_PORT", "8761"))
 CANVAS_WS_URL = os.getenv("CANVAS_WS_URL", "ws://127.0.0.1:8770/commands/{session_id}")
+# How far, in palm widths, the hand must sit from the neutral point before the
+# three-finger posture starts zooming. Raise it to widen the dead zone.
+ZOOM_DEADZONE_RATIO = float(os.getenv("ZOOM_DEADZONE_RATIO", "0.15"))
+ZOOM_FILTER_ALPHA = float(os.getenv("ZOOM_FILTER_ALPHA", "0.6"))
 logging.basicConfig(level=os.getenv("PATTERN_COMMAND_LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
@@ -37,9 +41,8 @@ class CommandProcessor:
         classifier = self.classifiers.setdefault(
             session_id,
             GestureClassifier(
-                release_pip_angle_deg=145.0,
-                zoom_motion_ratio=0.05,
-                zoom_filter_alpha=0.75,
+                zoom_deadzone_ratio=ZOOM_DEADZONE_RATIO,
+                zoom_filter_alpha=ZOOM_FILTER_ALPHA,
             ),
         )
         landmarks = packet.get("landmarks")
@@ -50,7 +53,8 @@ class CommandProcessor:
         if len(landmarks) != 21 or len(world) != 21:
             raise ValueError("expected exactly 21 landmarks and world_landmarks")
 
-        state = classifier.update([Point(**item) for item in world])
+        screen = [Point(**item) for item in landmarks]
+        state = classifier.update([Point(**item) for item in world], screen)
         tip, pip = landmarks[8], landmarks[6]
         result = self._base(packet, command=state.command, mode=state.mode)
         result.update({
@@ -59,8 +63,13 @@ class CommandProcessor:
                 "x": float(tip["x"]) - float(pip["x"]),
                 "y": float(tip["y"]) - float(pip["y"]),
             },
-            "zoom_direction": state.zoom_session_direction,
-            "release_frames": state.release_frames,
+            "zoom_direction": state.zoom_direction,
+            "finger_count": state.finger_count,
+            # The monitor draws this skeleton over the phone's source frame.
+            # Four decimals is well under one pixel at 640x480.
+            "landmarks": [
+                {"x": round(point.x, 4), "y": round(point.y, 4)} for point in screen
+            ],
         })
         return result
 
