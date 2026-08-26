@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import hypot
 from typing import Sequence
 
 from index_finger import IndexFingerClassifier, IndexFingerState, Landmark, distance_3d
@@ -10,35 +11,48 @@ from index_finger import IndexFingerClassifier, IndexFingerState, Landmark, dist
 class GestureState:
     command: str
     mode: str
-    release_frames: int
+    finger_count: int
     index: IndexFingerState
     middle: IndexFingerState
     ring: IndexFingerState
     pinky: IndexFingerState
     thumb_active: bool
-    zoom_mode_active: bool
-    thumb_index_spacing_ratio: float | None
-    zoom_session_direction: str | None
-    zoom_delta: float | None
+    zoom_active: bool
+    horizontal_ratio: float | None
+    horizontal_delta: float | None
+    zoom_direction: str | None
 
 
 class GestureClassifier:
-    """Container C rule engine for drawing, erasing, and thumb-index zoom."""
+    """Container C rule engine driven by the extended finger count.
+
+    Postures are counted in the natural order index -> middle -> ring -> pinky,
+    so only a prefix of that order produces a command. The thumb is never part
+    of the count; it only reports as a diagnostic value.
+
+    - 0 fingers (fist): ``CLEAR`` once per fist, then IDLE until the hand opens
+    - 1 finger: ``DRAW``
+    - 2 fingers: ``ERASE``
+    - 3 fingers: zoom, controlled by where the hand sits relative to the
+      neutral point captured when the posture began
+    - anything else: ``IDLE``
+
+    There is no mode lock. A posture change takes effect on the frame the new
+    posture stabilizes, and the fist is the only way to reset the canvas.
+    """
 
     def __init__(
         self,
         open_pip_angle_deg: float = 120.0,
         thumb_active_ratio: float = 0.65,
-        zoom_start_closed_ratio: float = 0.80,
-        zoom_start_open_ratio: float = 1.00,
-        zoom_start_confirm_frames: int = 3,
-        zoom_motion_ratio: float = 0.05,
-        zoom_filter_alpha: float = 1.0,
-        release_confirm_frames: int = 3,
-        release_pip_angle_deg: float | None = None,
+        zoom_deadzone_ratio: float = 0.15,
+        zoom_filter_alpha: float = 0.6,
+        **_legacy: object,
     ) -> None:
         if not 0.0 < zoom_filter_alpha <= 1.0:
             raise ValueError("zoom_filter_alpha must be within (0, 1]")
+        if zoom_deadzone_ratio <= 0.0:
+            raise ValueError("zoom_deadzone_ratio must be positive")
         self.index_classifier = IndexFingerClassifier(
             open_pip_angle_deg=open_pip_angle_deg,
             finger_indices=(5, 6, 7, 8),
@@ -56,176 +70,136 @@ class GestureClassifier:
             finger_indices=(17, 18, 19, 20),
         )
         self.thumb_active_ratio = thumb_active_ratio
-        self.zoom_start_closed_ratio = zoom_start_closed_ratio
-        self.zoom_start_open_ratio = zoom_start_open_ratio
-        self.zoom_start_confirm_frames = zoom_start_confirm_frames
-        self.zoom_motion_ratio = zoom_motion_ratio
+        self.zoom_deadzone_ratio = zoom_deadzone_ratio
         self.zoom_filter_alpha = zoom_filter_alpha
-        self.release_confirm_frames = release_confirm_frames
-        self.release_pip_angle_deg = (
-            open_pip_angle_deg if release_pip_angle_deg is None else release_pip_angle_deg
-        )
-        self._active_mode = "IDLE"
-        self._release_frames = 0
-        self._zoom_mode_active = False
-        self._zoom_start_frames = 0
-        self._zoom_start_ratio: float | None = None
-        self._zoom_session_direction: str | None = None
-        self._filtered_zoom_ratio: float | None = None
+        self.warmup_frames = self.index_classifier.window_size
+        self._frames = 0
+        self._clear_sent = False
+        self._zoom_neutral: float | None = None
+        self._filtered_ratio: float | None = None
 
     def reset(self) -> None:
         self.index_classifier.reset()
         self.middle_classifier.reset()
         self.ring_classifier.reset()
         self.pinky_classifier.reset()
-        self._active_mode = "IDLE"
-        self._release_frames = 0
-        self._zoom_mode_active = False
-        self._zoom_start_frames = 0
-        self._zoom_start_ratio = None
-        self._zoom_session_direction = None
-        self._filtered_zoom_ratio = None
+        self._frames = 0
+        self._clear_sent = False
+        self._zoom_neutral = None
+        self._filtered_ratio = None
 
-    def update(self, landmarks: Sequence[Landmark]) -> GestureState:
+    def update(
+        self,
+        landmarks: Sequence[Landmark],
+        screen_landmarks: Sequence[Landmark] | None = None,
+    ) -> GestureState:
+        self._frames += 1
         index = self.index_classifier.update(landmarks)
         middle = self.middle_classifier.update(landmarks)
         ring = self.ring_classifier.update(landmarks)
         pinky = self.pinky_classifier.update(landmarks)
-        index_only_open = (
-            index.stable_label == "OPEN"
-            and middle.stable_label == "CLOSED"
-            and ring.stable_label == "CLOSED"
-            and pinky.stable_label == "CLOSED"
-        )
-        two_fingers_open = (
-            index.stable_label == "OPEN"
-            and middle.stable_label == "OPEN"
-            and ring.stable_label == "CLOSED"
-            and pinky.stable_label == "CLOSED"
-        )
-        raw_index_only_open = (
-            index.raw_label == "OPEN"
-            and middle.raw_label == "CLOSED"
-            and ring.raw_label == "CLOSED"
-            and pinky.raw_label == "CLOSED"
-        )
 
-        spacing_ratio = None
-        zoom_delta = None
+        opened = [
+            finger.stable_label == "OPEN"
+            for finger in (index, middle, ring, pinky)
+        ]
+        finger_count = sum(opened)
+        # Only a prefix of index -> middle -> ring -> pinky counts. A stray
+        # pinky is not "one finger"; it is an unrecognized posture.
+        counted_in_order = opened == [True] * finger_count + [False] * (4 - finger_count)
+
         palm_width = distance_3d(landmarks[5], landmarks[17])
-        thumb_extension_ratio = (
-            distance_3d(landmarks[4], landmarks[5]) / palm_width
-            if palm_width > 0.0
-            else 0.0
-        )
-        thumb_active = index_only_open and thumb_extension_ratio >= self.thumb_active_ratio
-        raw_zoom_candidate = (
-            raw_index_only_open and thumb_extension_ratio >= self.thumb_active_ratio
+        thumb_active = (
+            palm_width > 0.0
+            and distance_3d(landmarks[4], landmarks[5]) / palm_width >= self.thumb_active_ratio
         )
 
-        allow_zoom_evaluation = self._active_mode in ("IDLE", "ZOOM")
-        if allow_zoom_evaluation and (index_only_open or raw_zoom_candidate):
-            # Once zoom starts, retain its control mode for the full index-only
-            # gesture. Thumb tracking can momentarily fluctuate during a pinch;
-            # it must not send the command back to DRAW in that interval.
-            spacing_ratio = distance_3d(landmarks[4], landmarks[8]) / palm_width if palm_width > 0.0 else 0.0
-            if not self._zoom_mode_active and raw_zoom_candidate:
-                self._zoom_start_frames += 1
-                # Count the three confirmation frames while the general finger
-                # stabilizer is warming up, but never lock before the stable
-                # index-only posture itself has been confirmed.
-                if (
-                    self._zoom_start_frames >= self.zoom_start_confirm_frames
-                    and index_only_open
-                ):
-                    if spacing_ratio <= self.zoom_start_closed_ratio:
-                        self._zoom_session_direction = "ZOOM_IN"
-                    elif spacing_ratio >= self.zoom_start_open_ratio:
-                        self._zoom_session_direction = "ZOOM_OUT"
-                    if self._zoom_session_direction is not None:
-                        self._zoom_mode_active = True
-                        self._zoom_start_ratio = spacing_ratio
-                        self._filtered_zoom_ratio = spacing_ratio
-        elif self._active_mode == "IDLE":
-            self._zoom_start_frames = 0
+        horizontal_ratio = self._horizontal_ratio(screen_landmarks)
+        zoom_active = counted_in_order and finger_count == 3 and horizontal_ratio is not None
 
-        if self._active_mode != "IDLE":
-            if index.pip_angle_deg < self.release_pip_angle_deg:
-                self._release_frames += 1
-            else:
-                self._release_frames = 0
+        if finger_count != 0:
+            self._clear_sent = False
+        if not zoom_active:
+            # Dropping the posture forgets neutral, so the next three-finger
+            # gesture re-anchors wherever the hand happens to be.
+            self._zoom_neutral = None
+            self._filtered_ratio = None
 
-            if self._release_frames >= self.release_confirm_frames:
-                self._active_mode = "IDLE"
-                self._release_frames = 0
-                self._zoom_mode_active = False
-                self._zoom_start_frames = 0
-                self._zoom_start_ratio = None
-                self._zoom_session_direction = None
-                self._filtered_zoom_ratio = None
-                command = "IDLE"
-            elif self._active_mode == "DRAW":
-                command = "DRAW"
-            elif self._active_mode == "ERASE":
-                command = "ERASE"
-            else:
-                command = self._zoom_command_from_motion(spacing_ratio)
+        horizontal_delta = None
+        if finger_count == 0:
+            # The finger stabilizer reports CLOSED until its window fills, so a
+            # hand that has just appeared would otherwise read as a fist and
+            # wipe the canvas on arrival.
+            warm = self._frames >= self.warmup_frames
+            mode = "CLEAR" if warm else "IDLE"
+            command = "CLEAR" if warm and not self._clear_sent else "IDLE"
+            self._clear_sent = self._clear_sent or warm
+        elif not counted_in_order:
+            mode, command = "IDLE", "IDLE"
+        elif finger_count == 1:
+            mode, command = "DRAW", "DRAW"
+        elif finger_count == 2:
+            mode, command = "ERASE", "ERASE"
+        elif zoom_active:
+            mode = "ZOOM"
+            command, horizontal_delta = self._zoom_command(horizontal_ratio)
         else:
-            if self._zoom_mode_active:
-                self._active_mode = "ZOOM"
-                command = self._zoom_command_from_motion(spacing_ratio)
-            elif index_only_open and not thumb_active:
-                self._active_mode = "DRAW"
-                command = "DRAW"
-            elif two_fingers_open:
-                self._active_mode = "ERASE"
-                command = "ERASE"
-            else:
-                command = "IDLE"
+            mode, command = "IDLE", "IDLE"
 
         return GestureState(
             command=command,
-            mode=self._active_mode,
-            release_frames=self._release_frames,
+            mode=mode,
+            finger_count=finger_count,
             index=index,
             middle=middle,
             ring=ring,
             pinky=pinky,
             thumb_active=thumb_active,
-            zoom_mode_active=self._zoom_mode_active,
-            thumb_index_spacing_ratio=spacing_ratio,
-            zoom_session_direction=self._zoom_session_direction,
-            zoom_delta=(spacing_ratio - self._zoom_start_ratio)
-            if spacing_ratio is not None and self._zoom_start_ratio is not None
-            else None,
+            zoom_active=zoom_active,
+            horizontal_ratio=horizontal_ratio,
+            horizontal_delta=horizontal_delta,
+            zoom_direction=command if command in ("ZOOM_IN", "ZOOM_OUT") else None,
         )
 
-    def _zoom_command_from_motion(self, spacing_ratio: float | None) -> str:
-        """Emit only the direction fixed at lock start, and only on movement."""
-        if (
-            spacing_ratio is None
-            or self._zoom_start_ratio is None
-            or self._zoom_session_direction is None
-        ):
-            return "IDLE"
+    def _horizontal_ratio(self, screen_landmarks: Sequence[Landmark] | None) -> float | None:
+        """Palm centre x expressed in palm widths, from screen-space landmarks.
 
-        if self._filtered_zoom_ratio is None:
-            self._filtered_zoom_ratio = spacing_ratio
+        World landmarks are hand-centred, so they never register the hand
+        travelling across the frame. Normalizing by the on-screen palm width
+        keeps the value stable as the hand moves toward or away from the camera.
+        """
+        if screen_landmarks is None or len(screen_landmarks) != 21:
+            return None
+        wrist, index_mcp, pinky_mcp = screen_landmarks[0], screen_landmarks[5], screen_landmarks[17]
+        palm_width = hypot(index_mcp.x - pinky_mcp.x, index_mcp.y - pinky_mcp.y)
+        if palm_width <= 0.0:
+            return None
+        return (wrist.x + index_mcp.x + pinky_mcp.x) / 3.0 / palm_width
+
+    def _zoom_command(self, horizontal_ratio: float | None) -> tuple[str, float | None]:
+        """Hold left of neutral to keep zooming in, right of it to zoom out.
+
+        The neutral point is captured once, when the three-finger posture
+        begins, and never moves while the posture is held. A ratcheting scheme
+        that advanced the reference on every event made the second zoom
+        impossible: the hand ran out of frame, and bringing it back to repeat
+        the motion read as travel the other way. Here, returning to neutral
+        simply stops; only crossing to the far side reverses the direction.
+        """
+        if horizontal_ratio is None:
+            return "IDLE", None
+
+        if self._filtered_ratio is None:
+            self._filtered_ratio = horizontal_ratio
         else:
-            self._filtered_zoom_ratio += self.zoom_filter_alpha * (
-                spacing_ratio - self._filtered_zoom_ratio
+            self._filtered_ratio += self.zoom_filter_alpha * (
+                horizontal_ratio - self._filtered_ratio
             )
+        if self._zoom_neutral is None:
+            self._zoom_neutral = self._filtered_ratio
+            return "IDLE", 0.0
 
-        delta = self._filtered_zoom_ratio - self._zoom_start_ratio
-        moved = abs(delta) >= self.zoom_motion_ratio
-        if not moved:
-            return "IDLE"
-
-        # Advance the reference after a meaningful movement. A stationary hand
-        # then becomes IDLE, while a reversal never turns into the opposite zoom.
-        self._zoom_start_ratio = self._filtered_zoom_ratio
-        if self._zoom_session_direction == "ZOOM_IN" and delta > 0.0:
-            return "ZOOM_IN"
-        if self._zoom_session_direction == "ZOOM_OUT" and delta < 0.0:
-            return "ZOOM_OUT"
-        return "IDLE"
+        offset = self._filtered_ratio - self._zoom_neutral
+        if abs(offset) < self.zoom_deadzone_ratio:
+            return "IDLE", offset
+        return ("ZOOM_IN" if offset < 0.0 else "ZOOM_OUT"), offset
