@@ -72,10 +72,12 @@ try {
             "--reload", "--reload-dir", "containers/0-web")
         Start-LocalService "canvas" @("-m", "uvicorn", "app:app", "--app-dir", "containers/1-canvas", "--host", "127.0.0.1", "--port", "8770",
             "--reload", "--reload-dir", "containers/1-canvas", "--reload-dir", "containers/3-pattern-command")
+        # The command must reach watchfiles as one argument. Start-Process
+        # splits an unquoted element on spaces, so quote it here.
         Start-LocalService "pattern-command" @("-m", "watchfiles", "--target-type", "command", "--filter", "python",
-            ".venv\Scripts\python.exe containers/3-pattern-command/app.py", "containers/3-pattern-command")
+            '".venv\Scripts\python.exe containers/3-pattern-command/app.py"', "containers/3-pattern-command")
         Start-LocalService "vision-analysis" @("-m", "watchfiles", "--target-type", "command", "--filter", "python",
-            ".venv\Scripts\python.exe -m containers.2-vision-analysis.app.main", "containers/2-vision-analysis/app")
+            '".venv\Scripts\python.exe -m containers.2-vision-analysis.app.main"', "containers/2-vision-analysis/app")
     } else {
         Start-LocalService "web" @("-m", "uvicorn", "app:app", "--app-dir", "containers/0-web", "--host", "127.0.0.1", "--port", "8000")
         Start-LocalService "canvas" @("-m", "uvicorn", "app:app", "--app-dir", "containers/1-canvas", "--host", "127.0.0.1", "--port", "8770")
