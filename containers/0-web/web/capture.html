@@ -1,0 +1,25 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>손 제스처 카메라</title><style>
+*{box-sizing:border-box}body{margin:0;background:#0b1020;color:#edf2ff;font:15px/1.5 system-ui,sans-serif}
+header,.bar,#stat{padding:14px}header{display:flex;gap:10px;align-items:center;border-bottom:1px solid #29314d}
+#dot{width:11px;height:11px;border-radius:50%;background:#ef5350}#dot.on{background:#42d392}
+header span:last-child{margin-left:auto;color:#9da8c7}.bar{display:flex;gap:10px}button{flex:1;padding:14px;border:0;border-radius:10px;background:#4f7cff;color:white;font-weight:700}button.off{background:#303952}button:disabled{opacity:.45}
+video{display:block;width:100%;background:#000;aspect-ratio:16/9;object-fit:cover}#stat{white-space:pre-wrap;color:#aab4d0}.err{color:#ff7875}b{color:#65e6ad}
+</style></head><body><header><span id="dot"></span><strong>손 제스처 카메라</strong><span id="token"></span></header>
+<div class="bar"><button id="start">카메라 시작</button><button id="stop" class="off" disabled>중지</button></div>
+<video id="video" autoplay muted playsinline></video><div id="stat">대기 중</div><script>
+const P=new URLSearchParams(location.search),TOKEN=P.get('t')||'',FPS=Math.min(15,Math.max(1,Number(P.get('fps'))||10));
+const W=640,H=480,Q=.72,BUFFER_LIMIT=400000;
+const wsUrl=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/camera?t='+encodeURIComponent(TOKEN);
+const video=document.querySelector('#video'),stat=document.querySelector('#stat'),dot=document.querySelector('#dot'),start=document.querySelector('#start'),stop=document.querySelector('#stop');
+document.querySelector('#token').textContent=TOKEN;const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;const ctx=canvas.getContext('2d');
+let stream,ws,timer,busy=false,seq=0,sent=0,dropped=0,t0=0;
+function pack(meta,jpeg){const m=new TextEncoder().encode(JSON.stringify(meta)),out=new Uint8Array(4+m.length+jpeg.length);new DataView(out.buffer).setUint32(0,m.length,false);out.set(m,4);out.set(jpeg,4+m.length);return out.buffer}
+async function go(){start.disabled=true;stat.textContent='카메라 권한 요청 중…';try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:W},height:{ideal:H}},audio:false})}catch(e){stat.innerHTML='<span class="err">카메라 오류: '+e.name+'</span>';start.disabled=false;return}
+video.srcObject=stream;await video.play();ws=new WebSocket(wsUrl);ws.onopen=()=>{dot.classList.add('on');stop.disabled=false;t0=performance.now();timer=setInterval(tick,1000/FPS)};ws.onmessage=e=>{if(typeof e.data==='string')stat.textContent=e.data};ws.onclose=e=>{stat.innerHTML='<span class="err">연결 종료 '+e.code+' '+e.reason+'</span>';cleanup()}}
+function tick(){if(!ws||ws.readyState!==1)return;if(busy||ws.bufferedAmount>BUFFER_LIMIT){dropped++;return}busy=true;ctx.drawImage(video,0,0,W,H);canvas.toBlob(async b=>{try{if(!b)return;const bytes=new Uint8Array(await b.arrayBuffer());ws.send(pack({seq:++seq,w:W,h:H,captured_at_ms:Date.now()},bytes));sent++;const sec=(performance.now()-t0)/1000;stat.innerHTML=`전송 <b>${sent}</b>장 · ${(sent/sec).toFixed(1)} FPS\n드롭 ${dropped} · 목표 ${FPS} FPS`}finally{busy=false}},'image/jpeg',Q)}
+function cleanup(){clearInterval(timer);stream?.getTracks().forEach(t=>t.stop());stream=null;dot.classList.remove('on');start.disabled=false;stop.disabled=true}
+function end(){if(ws){ws.onclose=null;ws.close();ws=null}cleanup();stat.textContent='중지됨'}start.onclick=go;stop.onclick=end;addEventListener('pagehide',end);
+if(!isSecureContext){stat.innerHTML='<span class="err">휴대폰 카메라는 HTTPS가 필요합니다. ngrok 주소로 접속하세요.</span>';start.disabled=true}else if(!TOKEN){stat.innerHTML='<span class="err">QR을 다시 스캔해 세션 주소로 접속하세요.</span>';start.disabled=true}
+</script></body></html>

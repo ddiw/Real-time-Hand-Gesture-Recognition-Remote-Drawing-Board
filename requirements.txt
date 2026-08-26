@@ -1,0 +1,6 @@
+mediapipe>=0.10.31,<0.11
+opencv-python>=4.10,<5
+fastapi>=0.115,<1
+uvicorn[standard]>=0.34,<1
+qrcode[pil]>=8,<9
+websockets>=15,<16

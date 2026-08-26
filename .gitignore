@@ -8,3 +8,5 @@ containers/2-vision-analysis/models/*.task
 
 data/drawings/*
 !data/drawings/.gitkeep
+captures/
+tmp/

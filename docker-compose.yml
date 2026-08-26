@@ -3,11 +3,23 @@ services:
     build:
       context: .
       dockerfile: containers/0-web/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      VISION_ANALYSIS_WS_URL: ws://vision-analysis:8760/ingest/{session_id}
+      SESSION_TOKEN: ${SESSION_TOKEN:-hand-board}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+    depends_on:
+      - vision-analysis
 
   canvas:
     build:
       context: .
       dockerfile: containers/1-canvas/Dockerfile
+    ports:
+      - "8770:8770"
+    environment:
+      WEB_CANVAS_OUTPUT_URL: ws://web:8000/ws/canvas-output/{session_id}
 
   vision-analysis:
     build:
@@ -17,9 +29,13 @@ services:
       - "8760:8760" # ingest: Container A -> B (ws://vision-analysis:8760/ingest/{session_id})
       - "8762:8762" # /health, /metrics
     environment:
-      - PATTERN_COMMAND_WS_URL=ws://pattern-command:8761/landmarks
+      PATTERN_COMMAND_WS_URL: ws://pattern-command:8761/landmarks
+    depends_on:
+      - pattern-command
 
   pattern-command:
     build:
       context: .
       dockerfile: containers/3-pattern-command/Dockerfile
+    environment:
+      CANVAS_WS_URL: ws://canvas:8770/commands/{session_id}
