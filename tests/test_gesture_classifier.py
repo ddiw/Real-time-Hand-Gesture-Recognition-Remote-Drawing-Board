@@ -69,30 +69,57 @@ class FingerCountCommandTests(unittest.TestCase):
         self.assertEqual(settle(classifier, 1).command, "DRAW")
 
 
+CLEAR_HOLD = 13
+
+
 class FistClearTests(unittest.TestCase):
-    def test_fist_clears_once_and_then_idles(self):
+    def test_a_held_fist_clears_once_and_then_idles(self):
         classifier = GestureClassifier()
-        settle(classifier, 1)
-        first = classifier.update(landmarks(0), screen())
+        settle(classifier, 1, frames=CLEAR_HOLD)
+        commands = [
+            classifier.update(landmarks(0), screen()).command
+            for _ in range(CLEAR_HOLD + 5)
+        ]
+        self.assertEqual(commands.count("CLEAR"), 1)
+        # The stabilizer still reports the fingers open for a frame or two after
+        # the hand closes, so the hold starts slightly late.
+        self.assertGreaterEqual(commands.index("CLEAR"), CLEAR_HOLD - 1)
+
+    def test_a_brief_fist_does_not_clear(self):
+        """A momentary tracking loss mid-gesture must not wipe the canvas."""
+        classifier = GestureClassifier()
+        settle(classifier, 1, frames=CLEAR_HOLD)
+        blip = [classifier.update(landmarks(0), screen()).command for _ in range(4)]
+        self.assertNotIn("CLEAR", blip)
+        self.assertEqual(settle(classifier, 1, frames=CLEAR_HOLD).command, "DRAW")
+
+    def test_the_hold_restarts_after_the_hand_reopens(self):
+        classifier = GestureClassifier()
+        settle(classifier, 1, frames=CLEAR_HOLD)
         for _ in range(4):
-            first = classifier.update(landmarks(0), screen())
-            if first.command == "CLEAR":
-                break
-        self.assertEqual(first.command, "CLEAR")
-        held = [classifier.update(landmarks(0), screen()).command for _ in range(4)]
-        self.assertTrue(all(command == "IDLE" for command in held))
+            classifier.update(landmarks(0), screen())
+        settle(classifier, 1, frames=CLEAR_HOLD)
+        resumed = [classifier.update(landmarks(0), screen()).command for _ in range(4)]
+        self.assertNotIn("CLEAR", resumed)
 
     def test_a_new_hand_does_not_clear_while_the_stabilizer_warms_up(self):
         classifier = GestureClassifier()
-        commands = [classifier.update(landmarks(1), screen()).command for _ in range(5)]
+        commands = [classifier.update(landmarks(1), screen()).command for _ in range(13)]
         self.assertNotIn("CLEAR", commands)
+
+    def test_a_hand_arriving_as_a_fist_waits_for_the_warmup(self):
+        classifier = GestureClassifier(warmup_frames=13, clear_hold_frames=3)
+        commands = [classifier.update(landmarks(0), screen()).command for _ in range(20)]
+        self.assertEqual(commands.count("CLEAR"), 1)
+        self.assertEqual(commands.index("CLEAR"), 12)
 
     def test_reopening_the_hand_arms_the_next_clear(self):
         classifier = GestureClassifier()
-        settle(classifier, 1)
-        settle(classifier, 0)
-        settle(classifier, 1)
-        second = [classifier.update(landmarks(0), screen()).command for _ in range(5)]
+        settle(classifier, 1, frames=CLEAR_HOLD)
+        first = [classifier.update(landmarks(0), screen()).command for _ in range(CLEAR_HOLD + 5)]
+        self.assertEqual(first.count("CLEAR"), 1)
+        settle(classifier, 1, frames=CLEAR_HOLD)
+        second = [classifier.update(landmarks(0), screen()).command for _ in range(CLEAR_HOLD + 5)]
         self.assertEqual(second.count("CLEAR"), 1)
 
 

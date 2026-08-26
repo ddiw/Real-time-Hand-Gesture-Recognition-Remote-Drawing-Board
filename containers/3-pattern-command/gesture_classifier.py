@@ -47,33 +47,32 @@ class GestureClassifier:
         thumb_active_ratio: float = 0.65,
         zoom_deadzone_ratio: float = 0.15,
         zoom_filter_alpha: float = 0.6,
+        warmup_frames: int = 13,
+        clear_hold_frames: int = 13,
+        finger_window: int = 5,
+        finger_open_votes: int = 4,
         **_legacy: object,
     ) -> None:
         if not 0.0 < zoom_filter_alpha <= 1.0:
             raise ValueError("zoom_filter_alpha must be within (0, 1]")
         if zoom_deadzone_ratio <= 0.0:
             raise ValueError("zoom_deadzone_ratio must be positive")
-        self.index_classifier = IndexFingerClassifier(
+        finger = dict(
             open_pip_angle_deg=open_pip_angle_deg,
-            finger_indices=(5, 6, 7, 8),
+            window_size=finger_window,
+            required_open_votes=finger_open_votes,
         )
-        self.middle_classifier = IndexFingerClassifier(
-            open_pip_angle_deg=open_pip_angle_deg,
-            finger_indices=(9, 10, 11, 12),
-        )
-        self.ring_classifier = IndexFingerClassifier(
-            open_pip_angle_deg=open_pip_angle_deg,
-            finger_indices=(13, 14, 15, 16),
-        )
-        self.pinky_classifier = IndexFingerClassifier(
-            open_pip_angle_deg=open_pip_angle_deg,
-            finger_indices=(17, 18, 19, 20),
-        )
+        self.index_classifier = IndexFingerClassifier(**finger, finger_indices=(5, 6, 7, 8))
+        self.middle_classifier = IndexFingerClassifier(**finger, finger_indices=(9, 10, 11, 12))
+        self.ring_classifier = IndexFingerClassifier(**finger, finger_indices=(13, 14, 15, 16))
+        self.pinky_classifier = IndexFingerClassifier(**finger, finger_indices=(17, 18, 19, 20))
         self.thumb_active_ratio = thumb_active_ratio
         self.zoom_deadzone_ratio = zoom_deadzone_ratio
         self.zoom_filter_alpha = zoom_filter_alpha
-        self.warmup_frames = self.index_classifier.window_size
+        self.warmup_frames = max(warmup_frames, finger_window)
+        self.clear_hold_frames = max(1, clear_hold_frames)
         self._frames = 0
+        self._fist_frames = 0
         self._clear_sent = False
         self._zoom_neutral: float | None = None
         self._filtered_ratio: float | None = None
@@ -84,6 +83,7 @@ class GestureClassifier:
         self.ring_classifier.reset()
         self.pinky_classifier.reset()
         self._frames = 0
+        self._fist_frames = 0
         self._clear_sent = False
         self._zoom_neutral = None
         self._filtered_ratio = None
@@ -117,7 +117,10 @@ class GestureClassifier:
         horizontal_ratio = self._horizontal_ratio(screen_landmarks)
         zoom_active = counted_in_order and finger_count == 3 and horizontal_ratio is not None
 
-        if finger_count != 0:
+        if finger_count == 0:
+            self._fist_frames += 1
+        else:
+            self._fist_frames = 0
             self._clear_sent = False
         if not zoom_active:
             # Dropping the posture forgets neutral, so the next three-finger
@@ -127,13 +130,19 @@ class GestureClassifier:
 
         horizontal_delta = None
         if finger_count == 0:
-            # The finger stabilizer reports CLOSED until its window fills, so a
-            # hand that has just appeared would otherwise read as a fist and
-            # wipe the canvas on arrival.
+            # Two separate guards, because they cover different accidents.
+            # Warm-up covers a hand that has just appeared: the stabilizer
+            # reports CLOSED until its window fills, so an arriving hand reads
+            # as a fist. The hold covers a hand already in frame, where a
+            # momentary tracking loss mid-gesture used to wipe the canvas.
             warm = self._frames >= self.warmup_frames
+            held = self._fist_frames >= self.clear_hold_frames
             mode = "CLEAR" if warm else "IDLE"
-            command = "CLEAR" if warm and not self._clear_sent else "IDLE"
-            self._clear_sent = self._clear_sent or warm
+            if warm and held and not self._clear_sent:
+                command = "CLEAR"
+                self._clear_sent = True
+            else:
+                command = "IDLE"
         elif not counted_in_order:
             mode, command = "IDLE", "IDLE"
         elif finger_count == 1:

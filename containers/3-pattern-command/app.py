@@ -21,6 +21,12 @@ CANVAS_WS_URL = os.getenv("CANVAS_WS_URL", "ws://127.0.0.1:8770/commands/{sessio
 # three-finger posture starts zooming. Raise it to widen the dead zone.
 ZOOM_DEADZONE_RATIO = float(os.getenv("ZOOM_DEADZONE_RATIO", "0.15"))
 ZOOM_FILTER_ALPHA = float(os.getenv("ZOOM_FILTER_ALPHA", "0.6"))
+# Frames a hand must be tracked before a fist counts, and frames the fist must
+# be held before it clears. At 15 FPS each is roughly 0.87 seconds.
+WARMUP_FRAMES = int(os.getenv("WARMUP_FRAMES", "13"))
+CLEAR_HOLD_FRAMES = int(os.getenv("CLEAR_HOLD_FRAMES", "13"))
+FINGER_WINDOW = int(os.getenv("FINGER_WINDOW", "5"))
+FINGER_OPEN_VOTES = int(os.getenv("FINGER_OPEN_VOTES", "4"))
 logging.basicConfig(level=os.getenv("PATTERN_COMMAND_LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
@@ -43,6 +49,10 @@ class CommandProcessor:
             GestureClassifier(
                 zoom_deadzone_ratio=ZOOM_DEADZONE_RATIO,
                 zoom_filter_alpha=ZOOM_FILTER_ALPHA,
+                warmup_frames=WARMUP_FRAMES,
+                clear_hold_frames=CLEAR_HOLD_FRAMES,
+                finger_window=FINGER_WINDOW,
+                finger_open_votes=FINGER_OPEN_VOTES,
             ),
         )
         landmarks = packet.get("landmarks")
