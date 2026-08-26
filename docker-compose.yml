@@ -7,10 +7,15 @@ services:
       - "8000:8000"
     environment:
       VISION_ANALYSIS_WS_URL: ws://vision-analysis:8760/ingest/{session_id}
+      CANVAS_COMMAND_WS_URL: ws://canvas:8770/commands/{session_id}
+      DRAWINGS_DIR: /app/data/drawings
       SESSION_TOKEN: ${SESSION_TOKEN:-hand-board}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+    volumes:
+      - ./data/drawings:/app/data/drawings
     depends_on:
       - vision-analysis
+      - canvas
 
   canvas:
     build:
@@ -39,3 +44,4 @@ services:
       dockerfile: containers/3-pattern-command/Dockerfile
     environment:
       CANVAS_WS_URL: ws://canvas:8770/commands/{session_id}
+      ZOOM_DEADZONE_RATIO: ${ZOOM_DEADZONE_RATIO:-0.15}

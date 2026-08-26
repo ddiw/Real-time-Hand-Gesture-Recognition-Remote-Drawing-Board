@@ -10,3 +10,6 @@ data/drawings/*
 !data/drawings/.gitkeep
 captures/
 tmp/
+
+# 사용자 로컬 참고 자료
+Real-time_Gesture_Remote_Drawing.pdf
