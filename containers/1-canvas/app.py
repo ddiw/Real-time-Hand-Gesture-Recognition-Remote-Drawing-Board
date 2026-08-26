@@ -34,8 +34,13 @@ async def commands(ws:WebSocket,session_id:str):
                     ok,png=cv2.imencode(".png",canvas.export())
                     if ok: await output.send(pack({"kind":"export","session_id":session_id,"zoom":round(canvas.zoom,3)},png.tobytes()))
                     continue
+                # COLOR is a monitor request too. A validates the value, so a
+                # malformed one here is a bug worth surfacing rather than hiding.
+                if command=="COLOR":
+                    try: canvas.set_pen_color(packet.get("color") or ())
+                    except (TypeError,ValueError): continue
                 p=point(packet)
                 d=packet.get("index_direction") or {}; direction=(float(d["x"]),float(d["y"])) if "x" in d and "y" in d else None
                 canvas.apply(command,p,direction); ok,jpeg=cv2.imencode(".jpg",canvas.render(),[cv2.IMWRITE_JPEG_QUALITY,88])
-                if ok: await output.send(pack({"kind":"canvas","session_id":session_id,"frame_id":packet.get("frame_id"),"seq":packet.get("seq"),"command":command,"mode":packet.get("mode","IDLE"),"zoom":round(canvas.zoom,3),"inference_ms":packet.get("inference_ms"),"finger_count":packet.get("finger_count"),"landmarks":packet.get("landmarks")},jpeg.tobytes()))
+                if ok: await output.send(pack({"kind":"canvas","session_id":session_id,"frame_id":packet.get("frame_id"),"seq":packet.get("seq"),"command":command,"mode":packet.get("mode","IDLE"),"zoom":round(canvas.zoom,3),"inference_ms":packet.get("inference_ms"),"finger_count":packet.get("finger_count"),"landmarks":packet.get("landmarks"),"pen_color":list(canvas.pen_color)},jpeg.tobytes()))
     except WebSocketDisconnect: canvas.hide_cursor()
