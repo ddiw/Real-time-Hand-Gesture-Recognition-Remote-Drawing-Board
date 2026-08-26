@@ -9,13 +9,14 @@ Python/OpenCV/MediaPipe 기반 손 제스처 그림판을 로컬 서비스 4개�
 휴대폰 카메라는 ngrok HTTPS 주소로 접속하고, 프레임은 로컬 비전 분석과 패턴
 판정을 거쳐 OpenCV 캔버스에 반영된다.
 
-현재 실제 테스트 주소:
+테스트 주소 형식:
 
-- 모니터: `https://sixties-crock-coasting.ngrok-free.dev/`
-- 휴대폰: `https://sixties-crock-coasting.ngrok-free.dev/capture.html?t=hand-board`
+- 모니터: `https://<ngrok-주소>/`
+- 휴대폰: `https://<ngrok-주소>/capture.html?t=<세션토큰>`
 
-ngrok 주소는 터널을 다시 실행하면 바뀔 수 있다. 위 주소는 이 문서 작성 시점에
-실행 중인 주소다.
+실제 주소는 `start_local.ps1 -Ngrok` 실행 시 콘솔에 출력된다. 이 리포지토리는
+공개이므로 살아있는 ngrok 주소와 세션 토큰을 문서에 적지 않는다. 주소를 아는
+사람은 누구나 촬영 엔드포인트에 연결할 수 있다.
 
 ## 2. 서비스 구조
 
