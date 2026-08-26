@@ -23,6 +23,11 @@ def to_bgr(value):
     r,g,b=(int(value[i:i+2],16) for i in (1,3,5)); return [b,g,r]
 clients: dict[str,set[WebSocket]]={}
 control: dict[str,object]={}
+# Receive time per seq, on A's clock. capture_ts comes from the phone, so
+# comparing it with a PC timestamp measures clock skew as much as latency. The
+# round trip A -> B -> C -> canvas -> A is measurable because both ends are here.
+RECV_LIMIT=400
+recv_at: dict[tuple[str,int],float]={}
 
 def pack(meta:dict,data:bytes)->bytes:
     raw=json.dumps(meta,ensure_ascii=False,separators=(",",":")).encode(); return struct.pack(">I",len(raw))+raw+data
@@ -101,6 +106,10 @@ async def camera(ws:WebSocket,t:str=""):
                     # pixels handed to B need no further flip.
                     "mirrored":False,
                 }
+                recv_at[(t,header["seq"])]=time.time()*1000
+                # B drops frames, so most seqs never come back. Keep the map from
+                # growing without bound by discarding the oldest entries.
+                while len(recv_at)>RECV_LIMIT: recv_at.pop(next(iter(recv_at)),None)
                 # A→B: exactly one TEXT JSON header, then one BINARY raw BGR frame.
                 await vision.send(json.dumps(header,separators=(",",":"))); await vision.send(frame.tobytes(order="C"))
                 await publish(t,pack({**header,"kind":"source"},jpeg))
@@ -116,6 +125,10 @@ async def canvas_output(ws:WebSocket,session_id:str):
             try: meta,data=unpack(payload)
             except ValueError: continue
             if meta.get("kind")!="export":
+                started=recv_at.pop((session_id,meta.get("seq")),None)
+                if started is not None:
+                    meta["pipeline_ms"]=round(time.time()*1000-started,1)
+                    payload=pack(meta,data)
                 await publish(session_id,payload); continue
             name=f"drawing_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
             (DRAWINGS/name).write_bytes(data)

@@ -41,7 +41,7 @@ header{display:flex;gap:10px;align-items:center;padding:14px 18px;border-bottom:
 <div class="metric"><span>모드</span><b id="mode">IDLE</b></div>
 <div class="metric"><span>손가락</span><b id="fingers">–</b></div>
 <div class="metric"><span>줌</span><b id="zoom">1.00×</b></div>
-<div class="metric"><span>추론</span><b id="infer">– ms</b></div>
+<div class="metric"><span>지연 (A→B→C→캔버스)</span><b id="infer">– ms</b></div>
 <div class="metric"><span>수신 FPS</span><b id="fps">0.0</b></div>
 </div>
 <ul class="guide"><li><b>1개</b> 그리기</li><li><b>2개</b> 지우기</li><li><b>3개</b> 좌 이동 확대 / 우 이동 축소</li><li><b>주먹</b> 초기화</li></ul>
@@ -95,7 +95,12 @@ function connect(){clearTimeout(retry);ws=new WebSocket((location.protocol==='ht
     // monitor viewer sees the same swatch selected.
     const pen=hexFromBgr(f.meta.pen_color);if(pen)markSwatch(pen);
     $('#zoom').textContent=Number(f.meta.zoom||1).toFixed(2)+'×';
-    $('#infer').textContent=Number(f.meta.inference_ms||0).toFixed(1)+' ms'};
+    // pipeline_ms is measured end to end on A's clock. inference_ms subtracts
+    // the phone's clock from the PC's, so it carries their skew and is only a
+    // fallback when A could not pair the seq.
+    $('#infer').textContent=f.meta.pipeline_ms!=null
+      ?Number(f.meta.pipeline_ms).toFixed(0)+' ms'
+      :Number(f.meta.inference_ms||0).toFixed(0)+' ms?'};
   ws.onclose=()=>{$('#dot').classList.remove('on');$('#status').textContent='재연결 중';retry=setTimeout(connect,2000)}}
 async function init(){const c=await fetch('/api/config').then(r=>r.json());token=c.session_token;
   const base=(c.public_base_url||location.origin).replace(/\/$/,'');const url=base+'/capture.html?t='+encodeURIComponent(token);
