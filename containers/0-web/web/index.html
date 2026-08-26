@@ -13,6 +13,10 @@ header{display:flex;gap:10px;align-items:center;padding:14px 18px;border-bottom:
 .tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .tools button{padding:9px 14px;border:0;border-radius:8px;background:#28345a;color:#dce4ff;font-weight:600;cursor:pointer}
 .tools button:hover{background:#33427088}.tools button.primary{background:#4f7cff;color:#fff}.tools button:disabled{opacity:.4;cursor:default}
+.swatches{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.swatches span{color:#8792b2;font-size:11px;margin-right:2px}
+.swatches button{width:26px;height:26px;padding:0;border-radius:50%;border:2px solid #29314d;cursor:pointer}
+.swatches button[aria-pressed="true"]{border-color:#edf2ff;box-shadow:0 0 0 2px #4f7cff}
 .panel{display:grid;grid-template-columns:220px 1fr;gap:18px;margin-top:18px}
 .qr img{width:190px;background:white;padding:8px;border-radius:8px}.qr a{display:block;color:#79a8ff;word-break:break-all;font-size:11px}
 .metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
@@ -28,6 +32,7 @@ header{display:flex;gap:10px;align-items:center;padding:14px 18px;border-bottom:
 <section class="card"><h3>휴대폰 원본 + 추론 결과</h3><div class="stage"><span id="sourceEmpty" class="placeholder">카메라 대기 중</span><div class="frame" id="sourceFrame" hidden><img id="source" alt="휴대폰 원본"><canvas id="overlay" width="640" height="480"></canvas></div></div></section>
 <section class="card"><h3>OpenCV 캔버스</h3>
 <div class="tools"><button id="zoomIn">확대 +</button><button id="zoomOut">축소 −</button><button id="clear">초기화</button><button id="save" class="primary">PNG 저장</button></div>
+<div class="swatches" id="swatches"><span>펜 색상</span></div>
 <div class="stage"><span id="canvasEmpty" class="placeholder">그림판 대기 중</span><img id="canvas" alt="캔버스" hidden style="max-width:100%;max-height:72vh;display:block"></div></section>
 </div>
 <div class="panel"><section class="card qr"><h3>휴대폰 연결</h3><div id="qr">주소 준비 중</div></section>
@@ -75,7 +80,17 @@ function drawOverlay(){const c=$('#overlay'),w=c.width,h=c.height;octx.clearRect
 function addShot(item,front){const a=document.createElement('a');a.href=item.url;a.download=item.name;a.title=item.name;a.target='_blank';a.rel='noopener';
   const img=document.createElement('img');img.src=item.url;img.alt=item.name;a.appendChild(img);
   front?$('#shots').prepend(a):$('#shots').appendChild(a);$('#shotsEmpty').hidden=true}
-function act(action){if(ws&&ws.readyState===1)ws.send(JSON.stringify({action}))}
+function act(action,value){if(ws&&ws.readyState===1)ws.send(JSON.stringify({action,value}))}
+const PENS=[['먹','#141414'],['빨강','#e53935'],['주황','#fb8c00'],['초록','#2e7d32'],['파랑','#1e6fe8'],['보라','#8e24aa']];
+function buildSwatches(){const bar=$('#swatches');
+  for(const [name,hex] of PENS){const b=document.createElement('button');
+    b.type='button';b.title=name;b.setAttribute('aria-label','펜 색상 '+name);b.dataset.hex=hex;
+    b.style.background=hex;b.setAttribute('aria-pressed',String(hex===PENS[0][1]));
+    b.onclick=()=>{act('color',hex);markSwatch(hex)};bar.appendChild(b)}}
+function markSwatch(hex){for(const b of $('#swatches').querySelectorAll('button'))
+  b.setAttribute('aria-pressed',String(b.dataset.hex.toLowerCase()===hex.toLowerCase()))}
+function hexFromBgr(c){return Array.isArray(c)&&c.length===3
+  ?'#'+[c[2],c[1],c[0]].map(v=>Number(v).toString(16).padStart(2,'0')).join(''):null}
 function connect(){clearTimeout(retry);ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/monitor?t='+encodeURIComponent(token));ws.binaryType='arraybuffer';
   ws.onopen=()=>{$('#dot').classList.add('on');$('#status').textContent='모니터 연결됨'};
   ws.onmessage=e=>{if(typeof e.data==='string')return;const f=unpack(e.data);
@@ -96,6 +111,9 @@ function connect(){clearTimeout(retry);ws=new WebSocket((location.protocol==='ht
     marks=f.meta.landmarks||null;pairSource(f.meta.seq);drawOverlay();
     $('#command').textContent=f.meta.command??'IDLE';$('#mode').textContent=f.meta.mode??'IDLE';
     $('#fingers').textContent=f.meta.finger_count??'–';
+    // The canvas is the authority on the active colour; follow it so a second
+    // monitor viewer sees the same swatch selected.
+    const pen=hexFromBgr(f.meta.pen_color);if(pen)markSwatch(pen);
     $('#zoom').textContent=Number(f.meta.zoom||1).toFixed(2)+'×';
     $('#infer').textContent=Number(f.meta.inference_ms||0).toFixed(1)+' ms'};
   ws.onclose=()=>{$('#dot').classList.remove('on');$('#status').textContent='재연결 중';retry=setTimeout(connect,2000)}}
@@ -103,7 +121,7 @@ async function init(){const c=await fetch('/api/config').then(r=>r.json());token
   const base=(c.public_base_url||location.origin).replace(/\/$/,'');const url=base+'/capture.html?t='+encodeURIComponent(token);
   $('#qr').innerHTML=`<img alt="휴대폰 접속 QR" src="/qr?u=${encodeURIComponent(url)}"><a href="${url}" target="_blank" rel="noopener">${url}</a>`;
   $('#zoomIn').onclick=()=>act('zoom_in');$('#zoomOut').onclick=()=>act('zoom_out');
-  $('#clear').onclick=()=>act('clear');$('#save').onclick=()=>act('save');
+  $('#clear').onclick=()=>act('clear');$('#save').onclick=()=>act('save');buildSwatches();
   try{const saved=await fetch('/api/drawings').then(r=>r.json());saved.forEach(item=>addShot(item,false));if(saved[0])lastSaved=saved[0].name}catch(e){}
   connect()}
 init();

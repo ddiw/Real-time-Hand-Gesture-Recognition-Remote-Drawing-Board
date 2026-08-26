@@ -16,6 +16,11 @@ TOKEN=os.getenv("SESSION_TOKEN","hand-board"); PUBLIC=os.getenv("PUBLIC_BASE_URL
 # Monitor buttons reach the canvas over the same /commands socket the gesture
 # pipeline uses, so a web zoom renders and reaches the monitor immediately.
 WEB_ACTIONS={"zoom_in":"ZOOM_IN","zoom_out":"ZOOM_OUT","clear":"CLEAR","save":"EXPORT"}
+HEX_COLOR=re.compile(r"#[0-9a-fA-F]{6}")
+def to_bgr(value):
+    """Validate a #rrggbb string from the monitor into canvas BGR channels."""
+    if not isinstance(value,str) or not HEX_COLOR.fullmatch(value): return None
+    r,g,b=(int(value[i:i+2],16) for i in (1,3,5)); return [b,g,r]
 clients: dict[str,set[WebSocket]]={}
 control: dict[str,object]={}
 
@@ -32,9 +37,9 @@ async def publish(session:str,payload:bytes)->None:
         try: await ws.send_bytes(payload)
         except Exception: stale.append(ws)
     for ws in stale: clients.get(session,set()).discard(ws)
-async def send_control(session:str,command:str)->None:
+async def send_control(session:str,command:str,**extra)->None:
     """Push one web-originated command to the canvas, reconnecting once."""
-    packet=json.dumps({"schema_version":"1.0","session_id":session,"seq":0,"command":command,"mode":"WEB"},separators=(",",":"))
+    packet=json.dumps({"schema_version":"1.0","session_id":session,"seq":0,"command":command,"mode":"WEB",**extra},separators=(",",":"))
     for _ in range(2):
         try:
             canvas=control.get(session)
@@ -122,8 +127,14 @@ async def monitor(ws:WebSocket,t:str=""):
     await ws.accept(); clients.setdefault(t,set()).add(ws)
     try:
         while True:
-            try: action=json.loads(await ws.receive_text()).get("action")
-            except (json.JSONDecodeError,AttributeError): continue
+            try: message=json.loads(await ws.receive_text())
+            except json.JSONDecodeError: continue
+            if not isinstance(message,dict): continue
+            action=message.get("action")
+            if action=="color":
+                bgr=to_bgr(message.get("value"))
+                if bgr: await send_control(t,"COLOR",color=bgr)
+                continue
             command=WEB_ACTIONS.get(action)
             if command: await send_control(t,command)
     except WebSocketDisconnect: clients.get(t,set()).discard(ws)

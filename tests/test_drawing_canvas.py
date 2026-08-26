@@ -53,6 +53,32 @@ class DrawingCanvasTests(unittest.TestCase):
         self.assertTrue(np.all(canvas.image[100, 100] == 255))
         self.assertTrue(np.any(canvas.image[186:195, 186:195] < 255))
 
+    def test_pen_colour_applies_to_the_next_stroke_only(self):
+        canvas = DrawingCanvas(100, 100, min_draw_distance=0, pen_thickness=6)
+        canvas.apply("DRAW", (20, 50))
+        canvas.apply("DRAW", (40, 50))
+        before = canvas.image[50, 30].copy()
+        canvas.set_pen_color((0, 0, 255))
+        canvas.apply("DRAW", (60, 50))
+        canvas.apply("DRAW", (80, 50))
+        self.assertTrue(np.array_equal(canvas.image[50, 30], before))
+        red = canvas.image[50, 70]
+        self.assertGreater(int(red[2]), 200)
+        self.assertLess(int(red[0]), 60)
+
+    def test_a_colour_change_starts_a_new_stroke(self):
+        canvas = DrawingCanvas(100, 100, min_draw_distance=0)
+        canvas.apply("DRAW", (10, 10))
+        canvas.set_pen_color((0, 0, 255))
+        canvas.apply("DRAW", (90, 10))
+        self.assertTrue(np.all(canvas.image[10, 50] == 255))
+
+    def test_pen_colour_rejects_bad_values(self):
+        canvas = DrawingCanvas(100, 100)
+        for bad in ((0, 0), (0, 0, 300), ()):
+            with self.assertRaises(ValueError):
+                canvas.set_pen_color(bad)
+
     def test_clear_resets_the_drawing_and_the_zoom(self):
         canvas = DrawingCanvas(100, 100, min_draw_distance=0)
         canvas.apply("DRAW", (20, 20))

@@ -98,6 +98,7 @@ class DrawingCanvas:
         eraser_radius: int = 24,
         min_draw_distance: float = 2.0,
         max_draw_distance: float = 120.0,
+        pen_color: tuple[int, int, int] = (20, 20, 20),
     ) -> None:
         self.width = width
         self.height = height
@@ -110,6 +111,7 @@ class DrawingCanvas:
         self.eraser_radius = eraser_radius
         self.min_draw_distance = min_draw_distance
         self.max_draw_distance = max_draw_distance
+        self.pen_color = pen_color
         self._previous_draw_point: tuple[int, int] | None = None
         self._cursor_command = "IDLE"
         self._cursor_point: tuple[int, int] | None = None
@@ -162,7 +164,7 @@ class DrawingCanvas:
 
         thickness = max(1, round(self.pen_thickness / self.zoom))
         if self._previous_draw_point is None:
-            cv2.circle(self.image, point, max(1, thickness // 2), (20, 20, 20), -1, cv2.LINE_AA)
+            cv2.circle(self.image, point, max(1, thickness // 2), self.pen_color, -1, cv2.LINE_AA)
         else:
             dx = point[0] - self._previous_draw_point[0]
             dy = point[1] - self._previous_draw_point[1]
@@ -171,10 +173,18 @@ class DrawingCanvas:
                 # A tracking glitch can move the index tip across the canvas in
                 # one frame. Start a new stroke rather than joining the two
                 # positions with a line that was never drawn.
-                cv2.circle(self.image, point, max(1, thickness // 2), (20, 20, 20), -1, cv2.LINE_AA)
+                cv2.circle(self.image, point, max(1, thickness // 2), self.pen_color, -1, cv2.LINE_AA)
             elif squared >= (self.min_draw_distance / self.zoom) ** 2:
-                cv2.line(self.image, self._previous_draw_point, point, (20, 20, 20), thickness, cv2.LINE_AA)
+                cv2.line(self.image, self._previous_draw_point, point, self.pen_color, thickness, cv2.LINE_AA)
         self._previous_draw_point = point
+
+    def set_pen_color(self, color) -> None:
+        """Change the pen colour. Ends the stroke so one line keeps one colour."""
+        values = tuple(int(channel) for channel in color)
+        if len(values) != 3 or not all(0 <= channel <= 255 for channel in values):
+            raise ValueError("pen colour must be three channels in 0..255")
+        self.pen_color = values
+        self.end_stroke()
 
     def clear(self) -> None:
         """Reset the drawing surface and the zoom level to their initial state."""
@@ -244,9 +254,11 @@ class DrawingCanvas:
             pen_shape = np.array(
                 [tail_left, tip_left, point, tip_right, tail_right], dtype=np.int32,
             )
-            cv2.fillConvexPoly(rendered, pen_shape, (40, 190, 245), cv2.LINE_AA)
+            # Paint the cursor in the active colour so the monitor shows what
+            # the next stroke will look like before it is drawn.
+            cv2.fillConvexPoly(rendered, pen_shape, self.pen_color, cv2.LINE_AA)
             cv2.polylines(rendered, [pen_shape], True, (35, 55, 70), 2, cv2.LINE_AA)
-            cv2.circle(rendered, point, 2, (20, 20, 20), -1, cv2.LINE_AA)
+            cv2.circle(rendered, point, 2, self.pen_color, -1, cv2.LINE_AA)
 
 
 class CaptureRequest:
