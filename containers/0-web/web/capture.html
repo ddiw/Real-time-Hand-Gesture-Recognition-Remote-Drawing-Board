@@ -9,7 +9,9 @@ video{display:block;width:100%;background:#000;aspect-ratio:16/9;object-fit:cove
 </style></head><body><header><span id="dot"></span><strong>손 제스처 카메라</strong><span id="token"></span></header>
 <div class="bar"><button id="start">카메라 시작</button><button id="stop" class="off" disabled>중지</button></div>
 <video id="video" autoplay muted playsinline></video><div id="stat">대기 중</div><script>
-const P=new URLSearchParams(location.search),TOKEN=P.get('t')||'',FPS=Math.min(15,Math.max(1,Number(P.get('fps'))||10));
+// Send rate is the pipeline's hard ceiling: nothing downstream can exceed it.
+// Override per session with ?fps=N while tuning.
+const P=new URLSearchParams(location.search),TOKEN=P.get('t')||'',FPS=Math.min(30,Math.max(1,Number(P.get('fps'))||15));
 const W=640,H=480,Q=.72,BUFFER_LIMIT=400000;
 const wsUrl=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/camera?t='+encodeURIComponent(TOKEN);
 const video=document.querySelector('#video'),stat=document.querySelector('#stat'),dot=document.querySelector('#dot'),start=document.querySelector('#start'),stop=document.querySelector('#stop');
