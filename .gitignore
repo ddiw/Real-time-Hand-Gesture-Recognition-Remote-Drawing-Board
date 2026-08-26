@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 모델 번들은 Docker 이미지 빌드 시점에 다운로드한다 (containers/2-vision-analysis/Dockerfile 참조).
+containers/2-vision-analysis/models/*.task
+
+data/drawings/*
+!data/drawings/.gitkeep

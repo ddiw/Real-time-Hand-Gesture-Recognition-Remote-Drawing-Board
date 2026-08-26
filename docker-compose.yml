@@ -13,6 +13,11 @@ services:
     build:
       context: .
       dockerfile: containers/2-vision-analysis/Dockerfile
+    ports:
+      - "8760:8760" # ingest: Container A -> B (ws://vision-analysis:8760/ingest/{session_id})
+      - "8762:8762" # /health, /metrics
+    environment:
+      - PATTERN_COMMAND_WS_URL=ws://pattern-command:8761/landmarks
 
   pattern-command:
     build:
